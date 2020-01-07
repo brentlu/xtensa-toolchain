@@ -1,27 +1,33 @@
 #!/bin/bash
 
 clean_up() {
-	if [ ${#} -ne 0 ]
+	local root_dir=${1}
+
+	if [ ${#} -ne 1 ]
 	then
 		echo -e "${FUNCNAME[0]}: incorrect parameter number ${#}"
 		return 1
 	fi
 
+	cd ${root_dir}
+
+	echo -e "Cleaning up old repositories..."
+
 	if [ -e "xtensa-overlay" ]
 	then
-		echo -p "remove old xtensa-overlay folder"
+		echo -e "  remove old xtensa-overlay folder"
 		rm -rf xtensa-overlay
 	fi
 
 	if [ -e "crosstool-ng" ]
 	then
-		echo -p "remove old crosstool-ng folder"
+		echo -e "  remove old crosstool-ng folder"
 		rm -rf crosstool-ng
 	fi
 
 	if [ -e "newlib-xtensa" ]
 	then
-		echo -p "remove old newlib-xtensa folder"
+		echo -e "  remove old newlib-xtensa folder"
 		rm -rf newlib-xtensa
 	fi
 
@@ -29,46 +35,57 @@ clean_up() {
 }
 
 clone_repositories() {
-	if [ ${#} -ne 0 ]
+	local root_dir=${1}
+
+	if [ ${#} -ne 1 ]
 	then
 		echo -e "${FUNCNAME[0]}: incorrect parameter number ${#}"
 		return 1
 	fi
 
+	echo -e "Cloning new repositories..."
+
 	# Clone both repos and check out the sof-gcc8.1 branch.
+	cd ${root_dir}
 	git clone https://github.com/thesofproject/xtensa-overlay.git
-	cd ${ROOT_DIR}/xtensa-overlay
+	cd ${root_dir}/xtensa-overlay
 	git checkout sof-gcc8.1
 	GITHASH_XTENSA=$(git log --format=%H -n 1)
-	echo "GITHASH_XTENSA=${GITHASH_XTENSA}"
 
-	cd ${ROOT_DIR}
+	cd ${root_dir}
 	git clone https://github.com/thesofproject/crosstool-ng.git
-	cd ${ROOT_DIR}/crosstool-ng
+	cd ${root_dir}/crosstool-ng
 	git checkout sof-gcc8.1
 	GITHASH_CROSSTOOL=$(git log --format=%H -n 1)
-	echo "GITHASH_CROSSTOOL=${GITHASH_CROSSTOOL}"
 
 	# Clone the header repository.
-	cd ${ROOT_DIR}
+	cd ${root_dir}
 	git clone https://github.com/jcmvbkbc/newlib-xtensa.git
-	cd ${ROOT_DIR}/newlib-xtensa
+	cd ${root_dir}/newlib-xtensa
 	git checkout -b xtensa origin/xtensa
 	GITHASH_NEWLIB=$(git log --format=%H -n 1)
-	echo "GITHASH_NEWLIB=${GITHASH_NEWLIB}"
+
+	echo -e "Cloning success:"
+	echo -e "GITHASH_XTENSA     = ${GITHASH_XTENSA}"
+	echo -e "GITHASH_CROSSTOOL  = ${GITHASH_CROSSTOOL}"
+	echo -e "GITHASH_NEWLIB     = ${GITHASH_NEWLIB}\n"
 
 	return 0
 }
 
 build_toolchain() {
-	if [ ${#} -ne 0 ]
+	local root_dir=${1}
+
+	if [ ${#} -ne 1 ]
 	then
 		echo -e "${FUNCNAME[0]}: incorrect parameter number ${#}"
 		return 1
 	fi
 
+	echo -e "Building toolchain..."
+
 	# Build and install the ct-ng tools in the local folder.
-	cd ${ROOT_DIR}/crosstool-ng
+	cd ${root_dir}/crosstool-ng
 	./bootstrap
 	./configure --prefix=`pwd`
 	make
@@ -81,13 +98,13 @@ build_toolchain() {
 	for ((idx=0; idx<${#CONFIG[@]}; ++idx)); do
 		cp ${CONFIG[idx]} .config
 		./ct-ng build
-		export PATH=${ROOT_DIR}/crosstool-ng/builds/${TARGET[idx]}/bin/:${PATH}
+		export PATH=${root_dir}/crosstool-ng/builds/${TARGET[idx]}/bin/:${PATH}
 	done
 
 	# Build and install the headers for each platform.
-	cd ${ROOT_DIR}/newlib-xtensa
+	cd ${root_dir}/newlib-xtensa
 	for ((idx=0; idx<${#TARGET[@]}; ++idx)); do
-		./configure --target=${TARGET[idx]} --prefix=${ROOT_DIR}/crosstool-ng/builds/xtensa-root
+		./configure --target=${TARGET[idx]} --prefix=${root_dir}/crosstool-ng/builds/xtensa-root
 		make
 		make install
 		rm -fr rm etc/config.cache
@@ -97,11 +114,15 @@ build_toolchain() {
 }
 
 make_deb_package() {
-	if [ ${#} -ne 0 ]
+	local root_dir=${1}
+
+	if [ ${#} -ne 1 ]
 	then
 		echo -e "${FUNCNAME[0]}: incorrect parameter number ${#}"
 		return 1
 	fi
+
+	echo -e "Making deb package..."
 
 	MAJOR_VERSION=$(date +%Y)
 	MINOR_VERSION=$(date +%m%d)
@@ -110,10 +131,10 @@ make_deb_package() {
 	PACKAGE_ROOT="${PACKAGE_NAME}_${MAJOR_VERSION}.${MINOR_VERSION}-${PACKAGE_REVISION}"
 
 	# Make a simple package for it
-	cd ${ROOT_DIR}
+	cd ${root_dir}
 	mkdir -p ${PACKAGE_ROOT}/opt
 	mkdir -p ${PACKAGE_ROOT}/DEBIAN
-	mv ${ROOT_DIR}/crosstool-ng/builds ${PACKAGE_ROOT}/opt/${PACKAGE_NAME}
+	mv ${root_dir}/crosstool-ng/builds ${PACKAGE_ROOT}/opt/${PACKAGE_NAME}
 	cat >> ${PACKAGE_ROOT}/DEBIAN/control << EOF
 	Package: ${PACKAGE_NAME}
 	Version: ${MAJOR_VERSION}.${MINOR_VERSION}-${PACKAGE_REVISION}
@@ -134,16 +155,82 @@ EOF
 	return 0
 }
 
+read_deb_file() {
+	local root_dir=${1}
+	local deb_file=${2}
+
+	if [ ${#} -ne 2 ]
+	then
+		echo -e "${FUNCNAME[0]}: incorrect parameter number ${#}"
+		return 1
+	fi
+
+	local info
+
+	cd ${root_dir}
+
+	echo -e "Reading deb file..."
+
+	info=$(dpkg --info ${deb_file})
+
+	while IFS= read -r line
+	do
+		if [[ "${line}" == *"crosstool-ng:"* ]]
+		then
+			DEB_FILE_CROSSTOOL=${line##*:}
+			DEB_FILE_CROSSTOOL=${DEB_FILE_CROSSTOOL##*[[:blank:]]}
+		fi
+
+		if [[ "${line}" == *"xtensa-overlay:"* ]]
+		then
+			DEB_FILE_XTENSA=${line##*:}
+			DEB_FILE_XTENSA=${DEB_FILE_XTENSA##*[[:blank:]]}
+		fi
+
+		if [[ "${line}" == *"newlib-xtensa:"* ]]
+		then
+			DEB_FILE_NEWLIB=${line##*:}
+			DEB_FILE_NEWLIB=${DEB_FILE_NEWLIB##*[[:blank:]]}
+		fi
+	done <<< "${info}"
+
+	echo -e "Reading success:"
+	echo -e "DEB_FILE_XTENSA    = ${DEB_FILE_XTENSA}"
+	echo -e "DEB_FILE_CROSSTOOL = ${DEB_FILE_CROSSTOOL}"
+	echo -e "DEB_FILE_NEWLIB    = ${DEB_FILE_NEWLIB}\n"
+
+	return 0
+}
+
 main() {
+	local action=${1}
 
-	ROOT_DIR=$(pwd)
-	local download_only=0
+	if [ ${#} -eq 0 ]
+	then
+		echo -e "ERROR: No action specified"
+		show_usage
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: show_usage fail"
+			return 1
+		fi
 
-	while getopts d option
+		return 1
+	fi
+
+	local root_dir=$(pwd)
+	local deb_file=""
+
+	echo -e "Action '${action}'"
+
+	shift
+
+	while getopts p: option
 	do
 		case "${option}" in
-		"d")
-			download_only=1
+		"p")
+			echo -e "Option found, deb file: '${OPTARG}'"
+			deb_file="${OPTARG}"
 			;;
 		*)
 			echo -e "ERROR: Unknown option '${OPTARG}'"
@@ -151,39 +238,108 @@ main() {
 		esac
 	done
 
-	clean_up
-	if [ $? -ne 0 ]
-	then
-		echo -e "${FUNCNAME[0]}: clean_up fail"
-		return 1
-	fi
+	case "${action}" in
+	"check")
+		if [[ -z "${deb_file}" ]]
+		then
+			echo -e "ERROR: No deb file specified"
+			return 1
+		fi
 
-	clone_repositories
-	if [ $? -ne 0 ]
-	then
-		echo -e "${FUNCNAME[0]}: clone_repositories fail"
-		return 1
-	fi
+		if [ ! -e ${deb_file} ]
+		then
+			echo -e "ERROR: deb file not exist"
+			return 1
+		fi
 
-	if [ ${download_only} -ne 0 ]
-	then
-		echo -e "download repositories only"
-		return 0
-	fi
+		clean_up "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clean_up fail"
+			return 1
+		fi
 
-	build_toolchain
-	if [ $? -ne 0 ]
-	then
-		echo -e "${FUNCNAME[0]}: build_toolchain fail"
-		return 1
-	fi
+		clone_repositories "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clone_repositories fail"
+			return 1
+		fi
 
-	make_deb_package
-	if [ $? -ne 0 ]
-	then
-		echo -e "${FUNCNAME[0]}: make_deb_package fail"
-		return 1
-	fi
+		read_deb_file "${root_dir}" "${deb_file}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: read_deb_file fail"
+			return 1
+		fi
+
+		if [[ "${DEB_FILE_CROSSTOOL}" == "${GITHASH_CROSSTOOL}" ]] &&
+		   [[ "${DEB_FILE_XTENSA}" == "${GITHASH_XTENSA}" ]] &&
+		   [[ "${DEB_FILE_NEWLIB}" == "${GITHASH_NEWLIB}" ]]
+		then
+			echo -e "The toolchain is up-to-date\n"
+		else
+			echo -e "The toolchain in out-of-date\n"
+		fi
+
+		# clean up again
+		clean_up "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clean_up fail"
+			return 1
+		fi
+		;;
+
+	"download")
+		clean_up "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clean_up fail"
+			return 1
+		fi
+
+		clone_repositories "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clone_repositories fail"
+			return 1
+		fi
+		;;
+		
+	"build")
+		clean_up "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clean_up fail"
+			return 1
+		fi
+
+		clone_repositories "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: clone_repositories fail"
+			return 1
+		fi
+
+		build_toolchain "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: build_toolchain fail"
+			return 1
+		fi
+
+		make_deb_package "${root_dir}"
+		if [ $? -ne 0 ]
+		then
+			echo -e "${FUNCNAME[0]}: make_deb_package fail"
+			return 1
+		fi
+		;;
+	*)
+		echo -e "ERROR: Unknown action '${action}', should be 'check', 'download' or 'build'"
+		;;
+	esac
 
 	return 0
 }
