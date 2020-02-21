@@ -136,21 +136,21 @@ make_deb_package() {
 	mkdir -p ${PACKAGE_ROOT}/DEBIAN
 	mv ${root_dir}/crosstool-ng/builds ${PACKAGE_ROOT}/opt/${PACKAGE_NAME}
 	cat >> ${PACKAGE_ROOT}/DEBIAN/control << EOF
-	Package: ${PACKAGE_NAME}
-	Version: ${MAJOR_VERSION}.${MINOR_VERSION}-${PACKAGE_REVISION}
-	Section: devel
-	Priority: optional
-	Architecture: amd64
-	Depends:
-	Maintainer: Brent Lu <brent.lu@intel.com>
-	Description: Toolchain for SOF firmware
-	 Git commits:
-	   crosstool-ng:   ${GITHASH_CROSSTOOL}
-	   xtensa-overlay: ${GITHASH_XTENSA}
-	   newlib-xtensa:  ${GITHASH_NEWLIB}
+Package: ${PACKAGE_NAME}
+Version: ${MAJOR_VERSION}.${MINOR_VERSION}-${PACKAGE_REVISION}
+Section: devel
+Priority: optional
+Architecture: amd64
+Depends:
+Maintainer: Brent Lu <brent.lu@intel.com>
+Description: Toolchain for SOF firmware
+ Git commits:
+   crosstool-ng:   ${GITHASH_CROSSTOOL}
+   xtensa-overlay: ${GITHASH_XTENSA}
+   newlib-xtensa:  ${GITHASH_NEWLIB}
 EOF
 
-	dpkg-deb --build ${PACKAGE_ROOT}}
+	dpkg-deb --build ${PACKAGE_ROOT}
 
 	return 0
 }
